@@ -18,6 +18,7 @@ from traits.etsconfig.api import ETSConfig
 ETSConfig.toolkit = "qt4"
 
 from ConfigParser import NoSectionError
+
 from pyface.confirmation_dialog import confirm
 from pyface.constant import OK
 from pyface.message_dialog import information, warning
