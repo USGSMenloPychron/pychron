@@ -29,6 +29,10 @@ class BaseSpectrometerManager(Manager):
     simulation = DelegatesTo('spectrometer')
     name = Property(depends_on='spectrometer')
 
+    def __init__(self, application, *args, **kw):
+        self.application = application
+        super(BaseSpectrometerManager, self).__init__(*args, **kw)
+
     def test_connection(self, **kw):
         return self.spectrometer.test_connection(**kw)
 
@@ -77,7 +81,7 @@ class BaseSpectrometerManager(Manager):
             # load the molecular weights dictionary
             p = os.path.join(paths.spectrometer_dir, 'molecular_weights.csv')
             if os.path.isfile(p):
-                self.info('loading "molecular_weights.csv" file')
+                self.info('loading "molecular_weights.csv" file. {}'.format(p))
                 with open(p, 'U') as f:
                     reader = csv.reader(f, delimiter='\t')
                     args = [[l[0], float(l[1])] for l in reader]
@@ -136,7 +140,5 @@ class BaseSpectrometerManager(Manager):
 
     def read_emission(self):
         return self.spectrometer.source.read_emission()
+
 # ============= EOF =============================================
-
-
-

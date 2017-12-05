@@ -83,6 +83,8 @@ class AnalysisGroup(HasTraits):
 
     total_n = AGProperty()
 
+    arar_constants = AGProperty()
+
     def attr_stats(self, attr):
         w, sd, sem, (vs, es) = self._calculate_weighted_mean(attr, error_kind='both')
         mswd = calculate_mswd(vs, es, wm=w)
@@ -106,6 +108,9 @@ class AnalysisGroup(HasTraits):
 
     def _get_age_units(self):
         return self.analyses[0].arar_constants.age_units
+
+    def _get_arar_constants(self):
+        return self.analyses[0].arar_constants
 
     def _get_age_scalar(self):
         au = self.age_units
@@ -303,7 +308,7 @@ class AnalysisGroup(HasTraits):
         if args:
             age = args[0]
             reg = args[1]
-            v, e = age.nominal_value, age.std_dev
+            v, e = nominal_value(age), std_dev(age)
             e = self._modify_error(v, e, self.isochron_age_error_kind,
                                    mswd=reg.mswd)
 
@@ -437,6 +442,23 @@ class InterpretedAgeGroup(StepHeatAnalysisGroup):
 
     name = Str
     use = Bool
+
+    macrochron_enabled = Bool(True)
+
+    lith_class = Str
+    lith_classes = List
+
+    lith_group = Str
+    lith_groups = List
+
+    lith_type = Str
+    lith_types = List
+
+    lith = Str
+    liths = List
+
+    reference = Str
+    lat_long = Str
 
     def _name_default(self):
         name = ''

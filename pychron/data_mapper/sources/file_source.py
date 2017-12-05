@@ -20,7 +20,17 @@ from pychron.data_mapper.sources.dvc_source import DVCSource
 
 
 class FileSource(DVCSource):
-    pass
+    _delimiter = ','
 
+    def file_gen(self, p, delimiter):
+        if delimiter is None:
+            delim = self._delimiter
+
+        def gen():
+            with open(p, 'r') as rfile:
+                for line in rfile:
+                    yield line.strip().split(delim)
+
+        return gen()
 
 # ============= EOF =============================================

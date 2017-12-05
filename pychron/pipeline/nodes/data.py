@@ -121,7 +121,8 @@ class DataNode(DVCNode):
     check_reviewed = Bool(False)
 
     def configure(self, pre_run=False, **kw):
-        if pre_run and getattr(self, self.analysis_kind):
+        print self, pre_run, getattr(self, self.analysis_kind), self.index
+        if pre_run and getattr(self, self.analysis_kind) and self.index == 0:
             return True
 
         if not pre_run:
@@ -143,7 +144,7 @@ class CSVNode(BaseNode):
             if dlg.open() == OK:
                 self.path = dlg.path
 
-        return self.path is not None
+        return bool(self.path)
 
     def run(self, state):
         if not self.unknowns:
@@ -225,7 +226,7 @@ class UnknownNode(DataNode):
         items = getattr(state, self.analysis_kind)
         items.extend(self.unknowns)
 
-        state.projects = {ai.project for ai in state.unknowns}
+        state.projects = {ai.project for ai in state.unknowns if hasattr(ai, 'project')}
 
 
 class ReferenceNode(DataNode):
@@ -467,6 +468,7 @@ class ListenUnknownNode(BaseAutoUnknownNode):
     post_analysis_delay = Float(5)
 
     max_period = 10
+    _between_updates = None
 
     def configure(self, pre_run=False, *args, **kw):
         if pre_run:
@@ -479,7 +481,7 @@ class ListenUnknownNode(BaseAutoUnknownNode):
                                       'Window: get analyses between now and now - hours'),
                  Item('hours'),
                  Item('period', label='Update Period (s)',
-                      tooltip='Defauly time (s) to delay between "check for new analyses"'),
+                      tooltip='Default time (s) to delay between "check for new analyses"'),
                  Item('mass_spectrometer', label='Mass Spectrometer',
                       editor=EnumEditor(name='available_spectrometers')),
                  Item('analysis_types', style='custom',
@@ -487,6 +489,7 @@ class ListenUnknownNode(BaseAutoUnknownNode):
                  Item('post_analysis_delay', label='Post Analysis Found Delay',
                       tooltip='Time (min) to delay before next "check for new analyses"'),
                  Item('verbose'),
+                 title='Configure',
                  kind='livemodal',
                  buttons=['OK', 'Cancel'])
         return v

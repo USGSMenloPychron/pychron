@@ -16,13 +16,15 @@
 
 # ============= standard library imports ========================
 import os
+from git import Repo
 
 # ============= enthought library imports =======================
-from git import Repo
 from pyface.tasks.action.schema import SToolBar
 from pyface.tasks.task_layout import TaskLayout, PaneItem
-from traits.api import List, Str, Any, HasTraits, Bool
+from traits.api import List, Str, Any, HasTraits, Bool, Instance, Int
 
+# ============= local library imports  ==========================
+from pychron.core.progress import progress_loader
 from pychron.dvc.tasks.actions import CloneAction, AddBranchAction, CheckoutBranchAction, PushAction, PullAction, \
     FindChangesAction
 from pychron.dvc.tasks.panes import RepoCentralPane, SelectionPane
@@ -30,24 +32,32 @@ from pychron.envisage.tasks.base_task import BaseTask
 # from pychron.git_archive.history import from_gitlog
 from pychron.git.hosts import IGitHost
 from pychron.git_archive.repo_manager import GitRepoManager
-from pychron.git_archive.utils import get_commits
+from pychron.git_archive.utils import get_commits, ahead_behind
 from pychron.github import Organization
 from pychron.paths import paths
-
-
-# ============= local library imports  ==========================
 
 
 class RepoItem(HasTraits):
     name = Str
     dirty = Bool
+    ahead = Int
+    behind = Int
+    status = Str
+
+    def update(self, fetch=True):
+        name = self.name
+        p = os.path.join(paths.repository_dataset_dir, name)
+        a, b = ahead_behind(p, fetch=fetch)
+        self.ahead = a
+        self.behind = b
+        self.status = '{},{}'.format(a, b)
 
 
 class ExperimentRepoTask(BaseTask):
     name = 'Experiment Repositories'
 
     selected_repository_name = Str
-    selected_local_repository_name = RepoItem
+    selected_local_repository_name = Instance(RepoItem)
 
     repository_names = List
     organization = Str
@@ -90,14 +100,17 @@ class ExperimentRepoTask(BaseTask):
         self.local_names = [RepoItem(name=i) for i in sorted(self.list_repos())]
 
     def find_changes(self, remote='origin', branch='master'):
-        for item in self.local_names:
+        self.debug('find changes')
+
+        def func(item, prog, i, n):
             name = item.name
-        # for name in self.list_repos():
+            prog.change_message('Examining: {}({}/{})'.format(name, i, n))
+            # for name in self.list_repos():
             r = Repo(os.path.join(paths.repository_dataset_dir, name))
             line = r.git.log('{}/{}..HEAD'.format(remote, branch), '--oneline')
             item.dirty = bool(line)
-            # if line:
-            #     changed.append(name)
+
+        progress_loader(self.local_names, func)
 
         # print changed
         # r = GitRepoManager()
@@ -179,7 +192,6 @@ class ExperimentRepoTask(BaseTask):
             self._branch_changed(self.branch)
 
     def _selected_local_repository_name_changed(self, new):
-        print 'asdfsad', new
         if new:
             root = os.path.join(paths.repository_dataset_dir, new.name)
             # print root, new, os.path.isdir(root)

@@ -62,7 +62,6 @@ class PersistenceSpec(HasTraits):
     gains = Dict
     trap = Float
     emission = Float
-    
     active_detectors = List
 
     previous_blank_runid = Str
@@ -72,6 +71,7 @@ class PersistenceSpec(HasTraits):
     rundate = Date
     runtime = Time
     load_name = Str
+    load_holder = Str
 
     cdd_ic_factor = Any
 
@@ -92,8 +92,15 @@ class PersistenceSpec(HasTraits):
     conditionals = List
     tripped_conditional = None
 
+    grain_polygon_blob = List
+
     power_achieved = Float
     lab_temperatures = List
     lab_humiditys = List
     lab_pneumatics = List
+
+    lithographic_unit = Str
+    lat_long = Str
+    rock_type = Str
+    reference = Str
 # ============= EOF =============================================

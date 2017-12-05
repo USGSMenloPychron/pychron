@@ -57,7 +57,6 @@ class AutomatedRunSpec(HasTraits):
     username = Str
     tray = Str
     queue_conditionals_name = Str
-    laboratory = Str
     # ===========================================================================
     # run id
     # ===========================================================================
@@ -166,6 +165,7 @@ class AutomatedRunSpec(HasTraits):
 
         result = klass()
         result.runid = self.runid
+        result.analysis_timestamp = datetime.now()
         result.isotope_group = arun.isotope_group
         result.tripped_conditional = arun.tripped_conditional
 
@@ -327,7 +327,7 @@ class AutomatedRunSpec(HasTraits):
             elif self.analysis_type.startswith('blank'):
                 d = db
 
-            # d = db if self.analysis_type.startswith('blank') else du
+                # d = db if self.analysis_type.startswith('blank') else du
 
         return d
 

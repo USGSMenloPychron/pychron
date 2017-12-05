@@ -23,13 +23,15 @@ from traits.api import HasTraits, Str, Instance, List, Event, on_trait_change, A
 
 from pychron.core.confirmation import remember_confirmation_dialog
 from pychron.core.helpers.filetools import list_directory2, add_extension
+from pychron.dvc.tasks.repo_task import RepoItem
+from pychron.git_archive.utils import ahead_behind
 from pychron.loggable import Loggable
 from pychron.paths import paths
 from pychron.pipeline.nodes import FindReferencesNode
 from pychron.pipeline.nodes import PushNode
 from pychron.pipeline.nodes import ReviewNode
 from pychron.pipeline.nodes.base import BaseNode
-from pychron.pipeline.nodes.data import UnknownNode, ReferenceNode
+from pychron.pipeline.nodes.data import UnknownNode, ReferenceNode, InterpretedAgeNode
 from pychron.pipeline.nodes.figure import IdeogramNode, SpectrumNode, FigureNode, SeriesNode, NoAnalysesError, \
     InverseIsochronNode
 from pychron.pipeline.nodes.filter import FilterNode
@@ -169,6 +171,8 @@ class PipelineEngine(Loggable):
     update_needed = Event
     refresh_table_needed = Event
 
+    repositories = List
+    selected_repositories = List
     # show_group_colors = Bool
 
     selected_pipeline_template = Str
@@ -241,6 +245,12 @@ class PipelineEngine(Loggable):
 
         self._set_grouping(items, 0)
 
+    def unknowns_graph_group_by_selected(self):
+        items = self.selected.unknowns
+        max_gid = max([si.graph_id for si in items]) + 1
+
+        self._set_grouping(self.selected_unknowns, max_gid, attr='graph_id')
+
     def unknowns_group_by_selected(self):
         items = self.selected.unknowns
         max_gid = max([si.group_id for si in items]) + 1
@@ -262,6 +272,9 @@ class PipelineEngine(Loggable):
         #     self.run_needed = True
 
     def configure(self, node):
+        if not isinstance(node, BaseNode):
+            return
+
         if node.configure():
             if isinstance(node, IdeogramNode):
                 e = node.editor
@@ -364,18 +377,19 @@ class PipelineEngine(Loggable):
 
         self.debug('add data node')
         newnode = UnknownNode(dvc=self.dvc, browser_model=self.browser_model)
-        node = self._get_last_node(node)
-        self.pipeline.add_after(node, newnode)
+        self._add_node(node, newnode, run)
 
     def add_references(self, node=None, run=False):
         newnode = ReferenceNode(name='references', dvc=self.dvc, browser_model=self.browser_model)
-        node = self._get_last_node(node)
-        self.pipeline.add_after(node, newnode)
+        self._add_node(node, newnode, run)
+
+    def add_interpreted_ages(self, node, run=False):
+        newnode = InterpretedAgeNode(dvc=self.dvc, browser_model=self.interpreted_age_browser_model)
+        self._add_node(node, newnode, run)
 
     def add_review(self, node=None, run=False):
         newnode = ReviewNode()
         self._add_node(node, newnode, run)
-
 
     def chain_ideogram(self, node):
         self._set_template('ideogram', clear=False)
@@ -590,8 +604,9 @@ class PipelineEngine(Loggable):
         state.veto = None
         state.canceled = False
 
-        for node in self.pipeline.iternodes(start_node):
+        for idx, node in enumerate(self.pipeline.iternodes(start_node)):
             node.visited = False
+            node.index = idx
 
         for idx, node in enumerate(self.pipeline.iternodes(start_node)):
 
@@ -650,6 +665,20 @@ class PipelineEngine(Loggable):
         self.update_needed = True
         self.refresh_table_needed = True
 
+        reponames = list({a.repository_identifier for items in (state.unknowns, state.references) for a in items})
+        if self.repositories:
+            enames = [r.name for r in self.repositories]
+            reponames = [n for n in reponames if n not in enames]
+
+        if reponames:
+            repos = [RepoItem(name=n) for n in reponames]
+            if self.repositories:
+                self.repositories.extend(repos)
+            else:
+                self.repositories = repos
+
+        self._update_repository_status()
+
     def select_node_by_editor(self, editor):
         for node in self.pipeline.nodes:
             if hasattr(node, 'editor'):
@@ -660,10 +689,43 @@ class PipelineEngine(Loggable):
                     # self.refresh_table_needed = True
                     break
 
+    def refresh_repository_status(self):
+        self.debug('PipelineEngine.refresh_repository_status')
+        for r in self._active_repositories():
+            r.update()
+
+    def pull(self):
+        self.debug('PipelineEngine.pull')
+        dvc = self.dvc
+        for r in self._active_repositories():
+            dvc.pull_repository(r.name)
+
+    def push(self):
+        self.debug('PipelineEngine.push')
+        dvc = self.dvc
+        for r in self._active_repositories():
+            r.update()
+            if r.behind:
+                self.warning_dialog('{} is Behind and needs to be updated before it can be pushed'.format(r.name))
+            else:
+                dvc.push_repository(r.name)
+
     # private
-    def _set_grouping(self, items, gid):
+    def _active_repositories(self):
+        if self.selected_repositories:
+            repos = self.selected_repositories
+        else:
+            repos = self.repositories
+        return repos
+
+    def _update_repository_status(self):
+        for r in self.repositories:
+            r.update()
+
+    def _set_grouping(self, items, gid, attr='group_id'):
         for si in items:
-            si.group_id = gid
+            setattr(si, attr, gid)
+            # si.group_id = gid
 
         if hasattr(self.selected, 'editor') and self.selected.editor:
             self.selected.editor.refresh_needed = True
@@ -770,10 +832,9 @@ class PipelineEngine(Loggable):
                 self.run_needed = newnode
 
     def _add_node(self, node, new, run=True):
-        if new.configure():
-            node = self._get_last_node(node)
-
-            self.pipeline.add_after(node, new)
+        # if new.configure():
+        node = self._get_last_node(node)
+        self.pipeline.add_after(node, new)
             # if run:
             #     self.run_needed = new
 
@@ -786,6 +847,24 @@ class PipelineEngine(Loggable):
         return node
 
     # handlers
+
+    @on_trait_change('active_editor')
+    def _handle_active_editor(self, obj, name, old, new):
+        def refresh():
+            self.refresh_table_needed = True
+
+        if old:
+            if hasattr(old, 'figure_model'):
+                old.on_trait_change(refresh, 'figure_model:panels:figures:refresh_unknowns_table', remove=True)
+
+        if new:
+            if hasattr(new, 'figure_model'):
+                new.on_trait_change(refresh, 'figure_model:panels:figures:refresh_unknowns_table')
+
+    # @on_trait_change('active_editor:figure_model:panels:figures:refresh_unknowns_table')
+    # def _handle_refresh(self, obj, name, old, new):
+    #     self.refresh_table_needed = True
+
     def _add_pipeline_fired(self):
         p = self.pipeline_group.add()
         self.pipeline = p
@@ -870,6 +949,7 @@ class PipelineEngine(Loggable):
 
     def _handle_len_unknowns(self, new):
         self._handle_len('unknowns', lambda e: e.set_items(self.selected.unknowns))
+
         def func(editor):
             vs = self.selected.unknowns
             editor.set_items(vs)

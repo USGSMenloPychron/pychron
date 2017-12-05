@@ -15,16 +15,19 @@
 # ===============================================================================
 
 # ============= enthought library imports =======================
+import json
 import os
 import shutil
 import time
-from threading import Thread, Timer
+from threading import Thread, Timer, Event as TEvent
 
 from apptools.preferences.preference_binding import bind_preference
-from numpy import copy
+from numpy import copy, array
 from traits.api import Instance, String, Property, Button, Bool, Event, on_trait_change, Str, Float
 
 from pychron.canvas.canvas2D.camera import Camera
+from pychron.core.helpers import binpack
+from pychron.core.helpers.binpack import pack, format_blob, encode_blob
 from pychron.core.helpers.filetools import unique_path, unique_path_from_manifest
 from pychron.core.ui.stage_component_editor import VideoComponentEditor
 from pychron.image.video import Video, pil_save
@@ -60,8 +63,8 @@ class VideoStageManager(StageManager):
     autofocus_manager = Instance(
         'pychron.mv.focus.autofocus_manager.AutoFocusManager')
 
-    zoom_calibration_manager = Instance(
-        'pychron.mv.zoom.zoom_calibration.ZoomCalibrationManager')
+    # zoom_calibration_manager = Instance(
+    #     'pychron.mv.zoom.zoom_calibration.ZoomCalibrationManager')
 
     snapshot_button = Button('Snapshot')
     auto_save_snapshot = Bool(True)
@@ -94,6 +97,29 @@ class VideoStageManager(StageManager):
     stop_timer = Event
 
     pxpermm = Float(23)
+
+    _measure_grain_t = None
+    _measure_grain_evt = None
+    grain_polygons = None
+
+    test_button = Button
+    _test_state = False
+
+    def _test_button_fired(self):
+        if self._test_state:
+            self.stop_measure_grain_polygon()
+
+            time.sleep(2)
+
+            d = self.get_grain_polygon_blob()
+            print d
+        else:
+            self.start_measure_grain_polygon()
+        self._test_state = not self._test_state
+
+    def motor_event_hook(self, name, value, *args, **kw):
+        if name == 'zoom':
+            self._update_zoom(value)
 
     def bind_preferences(self, pref_id):
         self.debug('binding preferences')
@@ -130,6 +156,60 @@ class VideoStageManager(StageManager):
                         '{}.video_output_mode'.format(pref_id))
         bind_preference(self.video, 'ffmpeg_path',
                         '{}.ffmpeg_path'.format(pref_id))
+
+    def get_grain_polygon(self):
+        ld = self.lumen_detector
+        l, m = ld.lum()
+        return m.tostring()
+
+    def get_grain_polygon_blob(self):
+        # self.debug('Get grain polygons n={}'.format(len(self.grain_polygons)))
+
+        # ps = ','.join([encode_blob(pack('bb', p)) for p in self.grain_polygons])
+        # print len(ps)
+        try:
+            p = next(self.grain_polygons)
+            return encode_blob(pack('bb', p))
+        except StopIteration:
+            pass
+
+        # return array(self.grain_polygons).tobytes()
+
+    def stop_measure_grain_polygon(self):
+        self.debug('Stop measure polygons {}'.format(self._measure_grain_evt))
+        if self._measure_grain_evt:
+            self._measure_grain_evt.set()
+        return True
+
+    def start_measure_grain_polygon(self):
+        self._measure_grain_evt = evt = TEvent()
+
+        def _measure_grain_polygon():
+            ld = self.lumen_detector
+            dim = self.stage_map.g_dimension
+            ld.pxpermm = self.pxpermm
+
+            self.debug('Starting measure grain polygon')
+            masks = []
+            display_image = self.autocenter_manager.display_image
+            offx, offy = self.canvas.get_screen_offset()
+            cropdim = dim * 2.5
+            while not evt.is_set():
+                src = copy(self.video.get_cached_frame())
+                src = ld.crop(src, cropdim, cropdim, offx, offy)
+                targets = ld.find_targets(display_image, src, dim)
+                # display_image.set_frame(src)
+                if targets:
+                    targets = [t.poly_points.tolist() for t in targets]
+                    masks.extend(targets)
+                evt.wait(1)
+
+            self.grain_polygons = (m for m in masks)
+            self.debug('exiting measure grain')
+
+        self._measure_grain_t = Thread(target=_measure_grain_polygon)
+        self._measure_grain_t.start()
+        return True
 
     def start_recording(self, new_thread=True, path=None, use_dialog=False, basename='vm_recording', **kw):
         """
@@ -242,7 +322,9 @@ class VideoStageManager(StageManager):
                     else:
                         self.information_dialog('Snapshot uploaded to "{}"'.format(upath))
             else:
-                self.information_dialog('Snapshot saved to "{}"'.format(path))
+                upath = None
+                if inform:
+                    self.information_dialog('Snapshot saved to "{}"'.format(path))
 
             if return_blob:
                 with open(path, 'rb') as rfile:
@@ -276,7 +358,7 @@ class VideoStageManager(StageManager):
     def clean_video_archive(self):
         if self.use_video_archiver:
             self.info('Cleaning video directory')
-            self.video_archiver.clean()
+            self.video_archiver.clean(('manifest.yaml',))
 
     def is_auto_correcting(self):
         return self._auto_correcting
@@ -312,8 +394,8 @@ class VideoStageManager(StageManager):
 
     def finish_move_to_hole(self, user_entry):
         self.debug('finish move to hole')
-        if user_entry and not self.keep_images_open:
-            self.close_open_images()
+        # if user_entry and not self.keep_images_open:
+        #     self.close_open_images()
 
     # private
     def _stage_map_changed_hook(self):
@@ -518,9 +600,14 @@ class VideoStageManager(StageManager):
     # ===============================================================================
     # handlers
     # ===============================================================================
+    def _update_zoom(self, v):
+        if self.canvas.camera:
+            self._update_xy_limits()
+
     @on_trait_change('parent:motor_event')
-    def _update_zoom(self, new):
-        s = self.stage_controller
+    def _update_motor(self, new):
+        print 'motor event', new, self.canvas, self.canvas.camera
+        # s = self.stage_controller
         if self.canvas.camera:
             if not isinstance(new, (int, float)):
                 args, _ = new
@@ -530,8 +617,9 @@ class VideoStageManager(StageManager):
                 v = new
 
             if name == 'zoom':
-                pxpermm = self.canvas.camera.set_limits_by_zoom(v, s.x, s.y)
-                self.pxpermm = pxpermm
+                self._update_xy_limits()
+                # pxpermm = self.canvas.camera.set_limits_by_zoom(v, s.x, s.y)
+                # self.pxpermm = pxpermm
             elif name == 'beam':
                 self.lumen_detector.beam_radius = v / 2.0
 
@@ -573,7 +661,6 @@ class VideoStageManager(StageManager):
         return self.canvas.camera.zoom_coefficients
 
     def _set_camera_zoom_coefficients(self, v):
-        print v
         self.canvas.camera.zoom_coefficients = ','.join(map(str, v))
         self._update_xy_limits()
 
@@ -593,7 +680,10 @@ class VideoStageManager(StageManager):
         x = self.stage_controller.get_current_position('x')
         y = self.stage_controller.get_current_position('y')
         pxpermm = self.canvas.camera.set_limits_by_zoom(z, x, y)
+        self.canvas.request_redraw()
         self.pxpermm = pxpermm
+
+        self.debug('updated xy limits zoom={}, pxpermm={}'.format(z, pxpermm))
 
     def _get_record_label(self):
         return 'Start Recording' if not self.is_recording else 'Stop'
@@ -684,10 +774,10 @@ class VideoStageManager(StageManager):
                                     canvas=self.canvas,
                                     application=self.application)
 
-    def _zoom_calibration_manager_default(self):
-        if self.parent.mode != 'client':
-            from pychron.mv.zoom.zoom_calibration import ZoomCalibrationManager
-            return ZoomCalibrationManager(laser_manager=self.parent)
+            # def _zoom_calibration_manager_default(self):
+            #     if self.parent.mode != 'client':
+            #         from pychron.mv.zoom.zoom_calibration import ZoomCalibrationManager
+            #         return ZoomCalibrationManager(laser_manager=self.parent)
 
 # ===============================================================================
 # calcualte camera params

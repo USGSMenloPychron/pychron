@@ -14,16 +14,13 @@
 # limitations under the License.
 # ===============================================================================
 
-# ============= enthought library imports =======================
-
 # ============= standard library imports ========================
 import glob
-import json
 import os
 from datetime import datetime
-
 from git import Repo
 
+from pychron import json
 from pychron.dvc import analysis_path
 from pychron.git_archive.repo_manager import GitRepoManager
 from pychron.paths import paths
@@ -83,14 +80,16 @@ def get_review_status(record):
 def find_interpreted_age_path(idn, repositories, prefixlen=3):
     prefix = idn[:prefixlen]
     suffix = '{}*.ia.json'.format(idn[prefixlen:])
-    # suffix = '{}*.ia.json'.format(prefix)
-    ret = []
-    for e in repositories:
-        pathname = '{}/{}/{}/ia/{}'.format(paths.repository_dataset_dir, e, prefix, suffix)
-        ps = glob.glob(pathname)
-        if ps:
-            ret.extend(ps)
+    # ret = []
+    # for e in repositories:
+    #     pathname = os.path.join(paths.repository_dataset_dir,
+    #                             e, prefix, 'ia', suffix)
+    #     ps = glob.glob(pathname)
+    #     if ps:
+    #         ret.extend(ps)
 
+    ret = [p for repo in repositories
+                for p in glob.glob(os.path.join(paths.repository_dataset_dir, repo, prefix, 'ia', suffix))]
     return ret
 
 

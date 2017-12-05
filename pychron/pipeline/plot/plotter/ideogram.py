@@ -203,8 +203,10 @@ class Ideogram(BaseArArFigure):
     # ===============================================================================
     # plotters
     # ===============================================================================
-    def _plot_aux(self, title, vk, ys, po, plot, pid,
-                  es=None):
+    def _plot_aux(self, title, vk, po, pid):
+
+        ys, es = self._get_aux_plot_data(vk)
+
         selection = []
         invalid = []
 
@@ -486,6 +488,7 @@ class Ideogram(BaseArArFigure):
         ogid = self.group_id
         gid = ogid + 1
 
+        we *= self.options.nsigma
         text = ''
         if self.options.display_mean:
             n = self.xs.shape[0]
@@ -536,32 +539,10 @@ class Ideogram(BaseArArFigure):
             self.update_graph_metadata(None, name, old, new)
 
     def update_graph_metadata(self, obj, name, old, new):
-        # print obj, name, old,new
+
         sorted_ans = self.sorted_analyses
         if obj:
-            # hover = obj.metadata.get('hover')
-            # if hover:
-            #     hoverid = hover[0]
-            # try:
-            # self.selected_analysis = sorted_ans[hoverid]
-            #
-            # except IndexError, e:
-            # print 'asaaaaa', e
-            #     return
-            # else:
-            # self.selected_analysis = None
-
             self._filter_metadata_changes(obj, sorted_ans, self._rebuild_ideo)
-            # self._set_selected(sorted_ans, sel)
-            # set the temp_status for all the analyses
-            # for i, a in enumerate(sorted_ans):
-            # a.temp_status = 1 if i in sel else 0
-            # else:
-            # sel = [i for i, a in enumerate(sorted_ans)
-            # if a.temp_status]
-            # sel = self._get_omitted(sorted_ans)
-            # print 'update graph meta'
-            # self._rebuild_ideo(sel)
 
     def _rebuild_ideo(self, sel=None):
         if sel is None:
@@ -819,7 +800,7 @@ class Ideogram(BaseArArFigure):
             # wm = np_max(maxs, axis=1)[0]
         else:
             wage = self.analysis_group.weighted_age
-            wm, we = wage.nominal_value, wage.std_dev
+            wm, we = nominal_value(wage), std_dev(wage)
 
         return wm, we, mswd, valid_mswd
 

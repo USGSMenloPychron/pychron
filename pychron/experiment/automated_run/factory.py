@@ -464,8 +464,7 @@ class AutomatedRunFactory(DVCAble, PersistenceLoggable):
     def _new_run(self, excludes=None, **kw):
 
         # need to set the labnumber now because analysis_type depends on it
-        arv = self._spec_klass(laboratory=self.laboratory,
-                               labnumber=self.labnumber, **kw)
+        arv = self._spec_klass(labnumber=self.labnumber, **kw)
 
         if excludes is None:
             excludes = []
@@ -854,6 +853,8 @@ class AutomatedRunFactory(DVCAble, PersistenceLoggable):
                 project_name = d['project']
                 if ipp and project_name.startswith(ipp):
                     repo = project_name
+                    if repo=='REFERENCES':
+                        repo = ''
                 else:
                     repo = camel_case(project_name)
                 self.repository_identifier = repo

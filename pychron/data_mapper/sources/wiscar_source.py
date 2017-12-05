@@ -1,5 +1,5 @@
 # ===============================================================================
-# Copyright 2015 Jake Ross
+# Copyright 2017 ross
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,13 +14,5 @@
 # limitations under the License.
 # ===============================================================================
 
-# ============= enthought library imports =======================
-# ============= standard library imports ========================
-# ============= local library imports  ==========================
-from pychron.pipeline.state import EngineState
-
-
-class QAState(EngineState):
-    pass
 
 # ============= EOF =============================================

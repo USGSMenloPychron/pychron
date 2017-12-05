@@ -22,6 +22,7 @@ from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
+import time
 from apptools.preferences.preference_binding import bind_preference
 from traits.api import HasTraits, Str, Enum, Bool, Int
 from traitsui.api import View
@@ -78,7 +79,7 @@ class Emailer(Loggable):
                 server.quit()
                 return True
         except (smtplib.SMTPServerDisconnected, BaseException), e:
-            print e
+            self.debug('SMTPServer connection host={}, user={}, port={}'.format(self.server_host, self.server_username, self.server_port))
             if warn:
                 self.warning('SMTPServer not properly configured')
             server = None
@@ -87,12 +88,18 @@ class Emailer(Loggable):
 
     def send(self, addrs, sub, msg, paths=None):
         self.debug('Send email. addrs: {}'.format(addrs, sub))
-        self.debug('========= Message ========')
-        for m in msg.split('\n'):
-            self.debug(m)
-        self.debug('==========================')
+        # self.debug('========= Message ========')
+        # for m in msg.split('\n'):
+        #     self.debug(m)
+        # self.debug('==========================')
 
-        server = self.connect()
+        for i in xrange(10):
+            server = self.connect()
+            if server is not None:
+                break
+            time.sleep(20)
+            self.debug('doing email connection retry {}'.format(i))
+
         if server:
             if isinstance(addrs, (str, unicode)):
                 addrs = [addrs]

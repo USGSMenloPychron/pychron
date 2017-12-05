@@ -27,13 +27,14 @@ import yaml
 from pychron.core.helpers.strtools import to_bool
 
 PIPELINE_TEMPLATES = '''- Isotope Evolutions
-- IC Factor
 - Blanks
+- IC Factor
 - Flux
 - Ideogram
 - Spectrum
 - Inverse Isochron
 - Series
+- Regression Series
 - Radial
 - Analysis Table
 - Interpreted Age Table
@@ -48,6 +49,7 @@ PIPELINE_TEMPLATES = '''- Isotope Evolutions
 - Geochron
 - Yield
 - CSV Analyses Export
+- CSV Ideogram
 '''
 
 IDENTIFIERS_DEFAULT = """
@@ -386,9 +388,18 @@ SPECTRUM_SCREEN = make_screen(**spec_d)
 
 radial_d = dict()
 RADIAL_SCREEN = make_screen(**radial_d)
+
+regression_series_d = dict()
+REGRESSION_SERIES_SCREEN = make_screen(**regression_series_d)
 # ===============================================================
 # Pipeline Templates
 # ===============================================================
+REGRESSION_SERIES = """
+required:
+nodes:
+  - klass: UnknownNode
+  - klass: RegressionSeriesNode
+"""
 RADIAL = """
 required:
 nodes:
@@ -524,7 +535,7 @@ nodes:
   - klass: ListenUnknownNode
   - klass: FilterNode
     filters:
-     - age<0
+     - age>0
   - klass: GroupingNode
     key: Identifier
   - klass: IdeogramNode
@@ -581,7 +592,6 @@ nodes:
   - klass: UnknownNode
   - klass: CSVAnalysesExportNode
 """
-
 
 REACTORS_DEFAULT = '''{
     "Triga": {

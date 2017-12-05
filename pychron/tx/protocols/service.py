@@ -16,15 +16,16 @@
 
 # ============= enthought library imports =======================
 # ============= standard library imports ========================
-import json
 import re
 import traceback
 
 from twisted.internet import defer
 from twisted.internet.protocol import Protocol
+from twisted.protocols.basic import LineReceiver
 
 from pychron.tx.errors import InvalidArgumentsErrorCode
 from pychron.tx.exceptions import ServiceNameError, ResponseError
+from pychron import json
 
 
 def default_err(failure):
@@ -61,7 +62,7 @@ class MockLogger(object):
         return mockfunc
 
 
-class ServiceProtocol(Protocol):
+class ServiceProtocol(LineReceiver):
     def __init__(self, logger=None, *args, **kw):
         # super(ServiceProtocol, self).__init__(*args, **kw)
         self._services = {}

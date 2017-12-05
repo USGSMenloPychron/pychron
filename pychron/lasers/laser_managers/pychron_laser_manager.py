@@ -14,20 +14,23 @@
 # limitations under the License.
 # ===============================================================================
 
+# ============= standard library imports ========================
+import cPickle as pickle
+import os
+import time
+from threading import Thread
+
 # ============= enthought library imports =======================
 from traits.api import Str, String, on_trait_change, Float, \
     Property, Instance, Event, Enum, Int, Either, Range, cached_property
-# ============= standard library imports ========================
-import cPickle as pickle
-import time
-import os
-from threading import Thread
+
 # ============= local library imports  ==========================
+from pychron.core.helpers.strtools import to_bool
 from pychron.envisage.view_util import open_view
 from pychron.globals import globalv
 from pychron.lasers.laser_managers.ethernet_laser_manager import EthernetLaserManager
-from pychron.core.helpers.strtools import to_bool
 from pychron.paths import paths
+from pychron import json
 
 
 class PychronLaserManager(EthernetLaserManager):
@@ -71,18 +74,18 @@ class PychronLaserManager(EthernetLaserManager):
         bind_preference(self, 'use_video', '{}.use_video'.format(pref_id))
         self.stage_manager.bind_preferences(pref_id)
 
-    # def open(self):
-    #     host = self.host
-    #     port = self.port
-    #
-    #     self.communicator = ec = EthernetCommunicator(host=host,
-    #                                                   port=port)
-    #     r = ec.open()
-    #     if r:
-    #         self.connected = True
-    #         self.opened()
-    #
-    #     return r
+        # def open(self):
+        #     host = self.host
+        #     port = self.port
+        #
+        #     self.communicator = ec = EthernetCommunicator(host=host,
+        #                                                   port=port)
+        #     r = ec.open()
+        #     if r:
+        #         self.connected = True
+        #         self.opened()
+        #
+        #     return r
 
 
         # self.trait_set(**dict(zip(('_x', '_y', '_z'),
@@ -132,6 +135,28 @@ class PychronLaserManager(EthernetLaserManager):
 
     def set_light(self, value):
         self._ask('SetLight {}'.format(value))
+
+    def acquire_grain_polygon(self):
+        return self._ask('AcquireGrainPolygonBlob')
+
+    def start_measure_grain_polygon(self):
+        return self._ask('StartMeasureGrainPolygon')
+
+    def stop_measure_grain_polygon(self):
+        return self._ask('StopMeasureGrainPolygon')
+
+    def get_grain_polygon_blob(self):
+        blobs = []
+        while 1:
+            blob = self._ask('GetGrainPolygonBlob')
+            if blob:
+                if blob == 'No Response':
+                    break
+                blobs.append(blob)
+            else:
+                break
+
+        return blobs
 
     def get_response_blob(self):
         return self._ask('GetResponseBlob')
@@ -213,9 +238,15 @@ class PychronLaserManager(EthernetLaserManager):
         if self._patterning:
             self.stop_pattern()
 
-    def extract(self, value, units=''):
+    def extract(self, value, units='', process=None):
         self.info('set laser output')
-        return self._ask('SetLaserOutput {},{}'.format(value, units)) == 'OK'
+
+        cmd = {'command': 'SetLaserOutput',
+               'value': value,
+               'units': units}
+        return self._ask(json.dumps(cmd)) == 'OK'
+
+        # return self._ask('SetLaserOutput {},{},{}'.format(value, units)) == 'OK'
 
     def enable_laser(self, *args, **kw):
         self.info('enabling laser')
