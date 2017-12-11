@@ -829,15 +829,16 @@ class MeasurementPyScript(ValvePyScript):
 
         :return: float, int
         """
+        r = 20
         if self.automated_run:
-            return self.automated_run.eqtime
-            # return self._automated_run_call(lambda: self.automated_run.eqtime)
-        else:
-            r = 15
-            cg = self._get_config()
-            if cg.has_option('Default', 'eqtime'):
-                r = cg.getfloat('Default', 'eqtime', )
-            return r
+            r = self.automated_run.eqtime
+
+            if r == -1:
+                r = 20
+                cg = self._get_config()
+                if cg.has_option('Default', 'eqtime'):
+                    r = cg.getfloat('Default', 'eqtime', )
+        return r
 
     @property
     def time_zero_offset(self):
