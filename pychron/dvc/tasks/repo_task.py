@@ -16,7 +16,7 @@
 
 # ============= standard library imports ========================
 import os
-from git import Repo
+from git import Repo, GitCommandError
 
 # ============= enthought library imports =======================
 from pyface.tasks.action.schema import SToolBar
@@ -25,6 +25,7 @@ from traits.api import List, Str, Any, HasTraits, Bool, Instance, Int
 
 # ============= local library imports  ==========================
 from pychron.core.progress import progress_loader
+from pychron.dvc.tasks import list_local_repos
 from pychron.dvc.tasks.actions import CloneAction, AddBranchAction, CheckoutBranchAction, PushAction, PullAction, \
     FindChangesAction
 from pychron.dvc.tasks.panes import RepoCentralPane, SelectionPane
@@ -83,50 +84,38 @@ class ExperimentRepoTask(BaseTask):
         org = Organization(self.organization)
         org._oauth_token = self.oauth_token
 
-        self.repository_names = org.repo_names
         self.refresh_local_names()
-        self.find_changes()
+        if self.confirmation_dialog('Check all Repositories for changes'):
+            self.find_changes()
+
+        self.repository_names = org.repo_names
 
     def refresh_local_names(self):
-        # ns = []
-        # for i in os.listdir(paths.repository_dataset_dir):
-        #     if i.startswith('.'):
-        #         continue
-        #
-        #     root = os.path.join(paths.repository_dataset_dir, i)
-        #     if os.path.isdir(root):
-        #         ns.append(i)
-
-        self.local_names = [RepoItem(name=i) for i in sorted(self.list_repos())]
+        self.local_names = [RepoItem(name=i) for i in sorted(list_local_repos())]
 
     def find_changes(self, remote='origin', branch='master'):
         self.debug('find changes')
 
         def func(item, prog, i, n):
             name = item.name
-            prog.change_message('Examining: {}({}/{})'.format(name, i, n))
-            # for name in self.list_repos():
+            if prog:
+                prog.change_message('Examining: {}({}/{})'.format(name, i, n))
+            self.debug('examining {}'.format(name))
             r = Repo(os.path.join(paths.repository_dataset_dir, name))
-            line = r.git.log('{}/{}..HEAD'.format(remote, branch), '--oneline')
-            item.dirty = bool(line)
+            try:
+                r.git.fetch()
+                line = r.git.log('{}/{}..HEAD'.format(remote, branch), '--oneline')
+                item.dirty = bool(line)
+            except GitCommandError, e:
+                self.warning('error examining {}. {}'.format(name, e))
 
-        progress_loader(self.local_names, func)
+        if self.selected_local_repository_name:
+            names = (self.selected_local_repository_name,)
+        else:
+            names = self.local_names
 
-        # print changed
-        # r = GitRepoManager()
-        # r.open_repo(name, root=root)
-        #
-        # r.has_unpushed_commits()
+        progress_loader(names, func)
         self.local_names = sorted(self.local_names, key=lambda k: k.dirty, reverse=True)
-
-    def list_repos(self):
-        for i in os.listdir(paths.repository_dataset_dir):
-            if i.startswith('.'):
-                continue
-
-            d = os.path.join(paths.repository_dataset_dir, i)
-            if os.path.isdir(d):
-                yield i
 
     def pull(self):
         self._repo.smart_pull(quiet=False)
@@ -155,14 +144,7 @@ class ExperimentRepoTask(BaseTask):
         if not os.path.isdir(path):
             self.debug('cloning repository {}'.format(name))
             service = self.application.get_service(IGitHost)
-
             service.clone_from(name, path, self.organization)
-            # url = 'https://github.com/{}/{}.git'.format(self.organization, name)
-            # prog = open_progress(n=3)
-            # prog.change_message('Cloning repository {}'.format(url))
-            # Repo.clone_from(url, path)
-            # prog.change_message('Cloning Complete')
-            # prog.close()
             self.refresh_local_names()
 
     def add_branch(self):

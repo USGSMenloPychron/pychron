@@ -230,6 +230,7 @@ class PipelineTask(BaseBrowserTask):
                     self.warning_dialog('No analyses selected to Tag')
                 return
 
+        note = ''
         if items:
             if tag is None:
                 a = self._get_tagname(items)
@@ -252,7 +253,7 @@ class PipelineTask(BaseBrowserTask):
                         if not isinstance(it, InterpretedAge):
                             db.set_analysis_tag(it.uuid, tag)
 
-                        it.set_tag({'name': tag, 'note': note})
+                        it.set_tag({'name': tag, 'note': note or ''})
                         if dvc.update_tag(it):
                             cs.append(it)
                             # it.refresh_view()

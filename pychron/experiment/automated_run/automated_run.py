@@ -252,7 +252,7 @@ class AutomatedRun(Loggable):
         self.spectrometer_manager.spectrometer.clear_cached_config()
 
     def py_reload_mftable(self):
-        self.spectrometer_manager.spectrometer.magnet.reload_mftable()
+        self.spectrometer_manager.spectrometer.reload_mftable()
 
     def py_set_integration_time(self, v):
         self.set_integration_time(v)
@@ -262,6 +262,9 @@ class AutomatedRun(Loggable):
 
     def py_define_detectors(self, isotope, det):
         self._define_detectors(isotope, det)
+
+    def py_position_hv(self, pos, detector):
+        self._set_hv_position(pos, detector)
 
     def py_position_magnet(self, pos, detector, use_dac=False):
         if not self._alive:
@@ -1211,12 +1214,17 @@ class AutomatedRun(Loggable):
         msg = 'Extraction Started {}'.format(script.name)
         self.heading('{}'.format(msg))
         self.spec.state = 'extraction'
+
+        executor = self.experiment_executor
         self.experiment_executor.refresh_table()
 
         self.debug('DO EXTRACTION {}'.format(self.runner))
         script.runner = self.runner
         script.manager = self.experiment_executor
         script.set_run_identifier(self.runid)
+
+        queue = executor.experiment_queue
+        script.set_load_identifier(queue.load_name)
 
         syn_extractor = None
         if script.syntax_ok(warn=False):
@@ -1259,10 +1267,9 @@ class AutomatedRun(Loggable):
             sblob = script.get_setpoint_blob()
             snapshots = script.snapshots
             videos = script.videos
-            grain_polygon_blob = script.get_grain_polygons()
-            self.debug('grain polygon blob {}'.format(len(grain_polygon_blob)))
+            grain_polygon_blob = script.get_grain_polygons() or []
+            self.debug('grain polygon blob n={}'.format(len(grain_polygon_blob)))
 
-            # grain_polygon_blob = array(grain_polygon).tostring()
             pid = script.get_active_pid_parameters()
             self._update_persister_spec(pid=pid or '',
                                         grain_polygon_blob=grain_polygon_blob,
@@ -1330,7 +1337,7 @@ class AutomatedRun(Loggable):
         sm = self.spectrometer_manager
         if sm:
             self.debug('setting trap, emission, spec, defl, and gains')
-            self._update_persister_spec(spec_dict=sm.make_parameters_dict(),
+            self._update_persister_spec(spec_dict=sm.make_configuration_dict(),
                                         defl_dict=sm.make_deflections_dict(),
                                         gains=sm.make_gains_dict(),
                                         trap=sm.read_trap_current(),
@@ -1379,7 +1386,8 @@ class AutomatedRun(Loggable):
 
         if script.execute():
             self.debug('setting _ms_pumptime')
-            self.experiment_executor.ms_pumptime_start = time.time()
+            if self.experiment_executor:
+                self.experiment_executor.ms_pumptime_start = time.time()
 
             self.heading('Post Measurement Finished')
             return True
@@ -1745,9 +1753,9 @@ anaylsis_type={}
     def _get_default_fods(self):
         def extract_fit_dict(fods, yd):
             for yi in yd:
-                fod = {'filter_outliers': yi['filter_outliers'],
-                       'iterations': yi['filter_iterations'],
-                       'std_devs': yi['filter_std_devs']}
+                fod = {'filter_outliers': yi.get('filter_outliers', False),
+                       'iterations': yi.get('filter_iterations', 0),
+                       'std_devs': yi.get('filter_std_devs', 0)}
                 fods[yi['name']] = fod
 
         sfods, bsfods = {}, {}
@@ -1837,7 +1845,7 @@ anaylsis_type={}
 
         cb = False
         if (not self.spec.analysis_type.startswith('blank')
-            and not self.spec.analysis_type.startswith('background')):
+                and not self.spec.analysis_type.startswith('background')):
             cb = True
 
         # g = p.isotope_graph
@@ -2103,6 +2111,12 @@ anaylsis_type={}
 
         self._load_previous()
 
+    def _set_hv_position(self, pos, detector, update_detectors=True,
+                         update_labels=True, update_isotopes=True):
+        ion = self.ion_optics_manager
+        if ion is not None:
+            change = ion.hv_position(pos, detector, update_isotopes=update_isotopes)
+
     def _set_magnet_position(self, pos, detector,
                              use_dac=False, update_detectors=True,
                              update_labels=True, update_isotopes=True,
@@ -2316,38 +2330,40 @@ anaylsis_type={}
 
         m = self.collector
 
-        m.trait_set(
-            automated_run=self,
-            console_display=self.experiment_executor.console_display,
-            measurement_script=script,
-            detectors=self._active_detectors,
-            collection_kind=grpname,
-            series_idx=series,
-            check_conditionals=check_conditionals,
-            ncounts=ncounts,
-            period_ms=period * 1000,
-            data_generator=get_data,
-            data_writer=data_writer,
-            starttime=starttime,
-            experiment_type=self.experiment_type,
-            refresh_age=self.spec.analysis_type in ('unknown', 'cocktail'))
+        m.trait_set(automated_run=self,
+                    console_display=self.experiment_executor.console_display,
+                    measurement_script=script,
+                    detectors=self._active_detectors,
+                    collection_kind=grpname,
+                    series_idx=series,
+                    check_conditionals=check_conditionals,
+                    ncounts=ncounts,
+                    period_ms=period * 1000,
+                    data_generator=get_data,
+                    data_writer=data_writer,
+                    starttime=starttime,
+                    experiment_type=self.experiment_type,
+                    refresh_age=self.spec.analysis_type in ('unknown', 'cocktail'))
 
         if self.plot_panel:
             self.plot_panel.integration_time = period
             self.plot_panel.set_ncounts(ncounts)
             self.plot_panel.total_counts += ncounts
 
-            from pychron.core.ui.gui import invoke_in_main_thread
-            invoke_in_main_thread(self._setup_isotope_graph, starttime_offset, color, grpname)
+            # from pychron.core.ui.gui import invoke_in_main_thread
+            # invoke_in_main_thread(self._setup_isotope_graph, starttime_offset, color, grpname)
+            # if grpname == 'sniff':
+            #     invoke_in_main_thread(self._setup_sniff_graph, starttime_offset, color)
+            # elif grpname == 'baseline':
+            #     invoke_in_main_thread(self._setup_baseline_graph, starttime_offset, color)
+
+            self._setup_isotope_graph(starttime_offset, color, grpname)
             if grpname == 'sniff':
-                invoke_in_main_thread(self._setup_sniff_graph, starttime_offset, color)
+                self._setup_sniff_graph(starttime_offset, color)
             elif grpname == 'baseline':
-                invoke_in_main_thread(self._setup_baseline_graph, starttime_offset, color)
+                self._setup_baseline_graph(starttime_offset, color)
 
-                # if self.spec.analysis_type in ('unknown', 'cocktail'):
-                #     invoke_in_main_thread(self._setup_figure_graph)
-
-        time.sleep(0.5)
+        # time.sleep(0.5)
         with self.persister.writer_ctx():
             m.measure()
 
@@ -2380,7 +2396,7 @@ anaylsis_type={}
         if starttime_offset > mi:
             min_ = -starttime_offset
 
-        graph.set_x_limits(min_=min_, max_=max_*1.1)
+        graph.set_x_limits(min_=min_, max_=max_ * 1.1)
         series = 0
         for k, iso in self.isotope_group.iteritems():
             idx = graph.get_plotid_by_ytitle(iso.detector)

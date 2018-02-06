@@ -28,6 +28,7 @@ from pychron.experiment.automated_run.result import AutomatedRunResult, AirResul
 from pychron.experiment.utilities.identifier import get_analysis_type, make_rid, make_runid, is_special, \
     convert_extract_device
 from pychron.experiment.utilities.position_regex import XY_REGEX
+from pychron.experiment.utilities.repository_identifier import make_references_repository_identifier
 from pychron.pychron_constants import SCRIPT_KEYS, SCRIPT_NAMES, ALPHAS, DETECTOR_IC
 
 logger = new_logger('AutomatedRunSpec')
@@ -129,6 +130,7 @@ class AutomatedRunSpec(HasTraits):
     irradiation_position = Int
     material = Str
     data_reduction_tag = Str
+    result_str = ''
 
     branch = 'master'
 
@@ -182,6 +184,9 @@ class AutomatedRunSpec(HasTraits):
 
     def is_truncated(self):
         return self.state == 'truncated'
+
+    def is_default_repository(self, ms, curtag):
+        return make_references_repository_identifier(self.analysis_type, ms, curtag) == self.repository_identifier
 
     def to_string(self):
         attrs = ['labnumber', 'aliquot', 'step',

@@ -23,6 +23,7 @@ from pyface.constant import CANCEL, NO
 from pyface.tasks.task_layout import PaneItem, TaskLayout, Splitter, Tabbed
 from pyface.timer.do_later import do_after
 from traits.api import Int, on_trait_change, Bool, Instance, Event, Color
+from traits.trait_errors import TraitError
 
 from pychron.core.helpers.filetools import add_extension, backup
 from pychron.core.ui.preference_binding import color_bind_preference
@@ -291,7 +292,7 @@ class ExperimentEditorTask(EditorTask):
     def _open_abort(self):
         try:
             self.notifier.close()
-        except AttributeError:
+        except (AttributeError, TraitError), e:
             pass
 
     def _open_file(self, path, **kw):
@@ -756,8 +757,8 @@ class ExperimentEditorTask(EditorTask):
         plugin = ip.get_plugin('Experiment', category='general')
         mode = ip.get_parameter(plugin, 'mode')
 
-        proto = 'pychron.database.isotope_database_manager.IsotopeDatabaseManager'
-        iso_db_man = self.application.get_service(proto)
+        # proto = 'pychron.database.isotope_database_manager.IsotopeDatabaseManager'
+        # iso_db_man = self.application.get_service(proto)
         # experimentor.iso_db_man = iso_db_man
 
         proto = 'pychron.dvc.dvc.DVC'
@@ -765,7 +766,7 @@ class ExperimentEditorTask(EditorTask):
         # experimentor.dvc = dvc
 
         experimentor = Experimentor(application=self.application,
-                                    mode=mode, dvc=dvc, iso_db_man=iso_db_man)
+                                    mode=mode, dvc=dvc)
 
         experimentor.executor.set_managers()
         experimentor.executor.bind_preferences()

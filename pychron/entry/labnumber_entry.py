@@ -103,6 +103,7 @@ class LabnumberEntry(DVCIrradiationable):
 
     selected_sample = Any
     irradiation_prefix = Str
+    irradiation_project_prefix = Str
 
     dirty = Bool
     suppress_dirty = Bool
@@ -122,7 +123,9 @@ class LabnumberEntry(DVCIrradiationable):
     def __init__(self, *args, **kw):
         super(LabnumberEntry, self).__init__(*args, **kw)
 
-        for key in ('irradiation_prefix', 'monitor_name',
+        for key in ('irradiation_prefix',
+                    'irradiation_project_prefix',
+                    'monitor_name',
                     'monitor_material', 'j_multiplier'):
             bind_preference(self, key, 'pychron.entry.{}'.format(key))
 
@@ -130,23 +133,6 @@ class LabnumberEntry(DVCIrradiationable):
 
     def activated(self):
         pass
-
-    # def import_irradiation(self):
-    #     self.debug('import irradiation')
-        # from pychron.entry.dvc_import import do_import_irradiation
-
-        # mdb = 'pychron.mass_spec.database.massspec_database_adapter.MassSpecDatabaseAdapter'
-        # mssource = self.application.get_service(mdb)
-        # mssource.bind_preferences()
-        #
-        # from pychron.data_mapper import do_import_irradiation
-        # do_import_irradiation(dvc=self.dvc, sources={mssource: 'Mass Spec'}, default_source='Mass Spec')
-        # self.updated = True
-
-    # def import_analyses(self):
-    #     self.info('import analyses')
-    #     from pychron.data_mapper import do_import_analyses
-    #     do_import_analyses(dvc=self.dvc)
 
     def import_irradiation_load_xls(self, p):
         self.info('import irradiation file: {}'.format(p))
@@ -367,9 +353,12 @@ class LabnumberEntry(DVCIrradiationable):
                                          dvc=self.dvc,
                                          db=self.dvc.db)
                 if lg.setup():
-                    lg.overwrite = overwrite
                     lg.generate_identifiers()
+                    for level in self.levels:
+                        self._save_to_db(level, update=False)
+
                     self._update_level()
+                    self._inform_save()
 
     def preview_generate_identifiers(self):
         if self.check_monitor_name():
@@ -387,22 +376,6 @@ class LabnumberEntry(DVCIrradiationable):
             self.warning_dialog('No monitor name set in Preferences.'
                                 ' Set before trying to generate identifiers. e.g "FC-2"')
             return True
-
-            # def make_irradiation_load_template(self, p):
-            #     from pychron.entry.loaders.irradiation_template import IrradiationTemplate
-            #     i = IrradiationTemplate()
-            #     i.make_template(p)
-
-            # loader = XLSIrradiationLoader()
-            # loader.make_template(p)
-
-    # def import_irradiation_load_xls(self, p):
-    #     self.warning_dialog('XLS Irradiation Import not currently available')
-    #     return
-    #
-    #     loader = XLSIrradiationLoader(db=self.dvc.db,
-    #                                   dvc=self.dvc)
-    #     loader.load_irradiation(p)
 
     def push_changes(self):
         if self.dvc.meta_repo.has_unpushed_commits():
@@ -548,17 +521,20 @@ class LabnumberEntry(DVCIrradiationable):
 
             proj = ir.project
             mat = ir.material
+            grainsize = ir.grainsize
+            principal_investigator = ir.principal_investigator
             if proj:
-                proj = db.add_project(proj)
+                proj = db.add_project(proj, pi=ir.principal_investigator)
 
             if mat:
-                mat = db.add_material(mat)
+                mat = db.add_material(mat, grainsize=grainsize)
 
             if sam:
                 sam = db.add_sample(sam,
-                                    project=proj,
-                                    material=mat)
-                sam.igsn = ir.igsn
+                                    proj.name,
+                                    ir.principal_investigator,
+                                    mat, grainsize=ir.grainsize)
+                # sam.igsn = ir.igsn
                 dbpos.sample = sam
 
             prog.change_message('Saving {}{}{} identifier={}'.format(irradiation, level, ir.hole, ln))
@@ -718,6 +694,9 @@ available holder positions {}'.format(n, len(self.irradiated_positions)))
                     item = self.canvas.scene.get_item(str(ir.hole))
                     item.fill = True
 
+                if v == self.monitor_name:
+                    item.monitor_indicator = True
+
                 set_color(item, v)
 
                 if dbpos.sample.material:
@@ -814,13 +793,13 @@ available holder positions {}'.format(n, len(self.irradiated_positions)))
         irrad = self._get_irradiation_editor(name=name)
         new_irrad = irrad.add()
         if new_irrad:
-            pname = 'Irradiation-{}'.format(new_irrad)
+            pname = '{}{}'.format(self.irradiation_project_prefix, new_irrad)
             sname = self.monitor_name
 
             def add_default():
                 # add irradiation project for flux monitors
                 self.dvc.add_project(pname, principal_investigator=self.default_principal_investigator)
-                self.dvc.add_sample(sname, pname, self.monitor_material)
+                self.dvc.add_sample(sname, pname, self.default_principal_investigator, self.monitor_material)
 
             if self.confirmation_dialog('Add default project ({}) and '
                                         'flux monitor sample ({}) for this irradiation?'.format(pname, sname)):

@@ -16,10 +16,11 @@
 from traits.api import Float
 from traitsui.api import View, Item, RangeEditor
 
+from pychron.spectrometer.fieldmixin import FieldMixin
 from pychron.spectrometer.spectrometer_device import SpectrometerDevice
 
 
-class BaseSource(SpectrometerDevice):
+class BaseSource(SpectrometerDevice, FieldMixin):
     nominal_hv = Float(4500)
     current_hv = Float(4500)
 
@@ -29,6 +30,14 @@ class BaseSource(SpectrometerDevice):
         # self.read_z_symmetry()
         # self.read_trap_current()
         # self.read_hv()
+
+    def set_hv(self, new):
+        pass
+
+    # private
+    def _nominal_hv_changed(self, new):
+        if new is not None:
+            self.set_hv(new)
 
 
 

@@ -96,7 +96,6 @@ class PlotPanel(Loggable):
     graph_container = Instance(GraphContainer)
     # analysis_view = Instance(ArArAutomatedRunAnalysisView, ())
     analysis_view = Instance('pychron.processing.analyses.view.automated_run_view.AutomatedRunAnalysisView')
-
     isotope_group = Instance(IsotopeGroup)
 
     sniff_graph = Instance(Graph)
@@ -135,7 +134,7 @@ class PlotPanel(Loggable):
     hops = List
 
     info_func = None
-    integration_time = 1.1
+    integration_time = 1.05
 
     def set_peak_center_graph(self, graph):
         graph.page_name = 'Peak Center'

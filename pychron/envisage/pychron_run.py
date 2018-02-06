@@ -50,6 +50,7 @@ PACKAGE_DICT = dict(
 
     # data mappers
     USGSVSCDataPlugin='pychron.data_mapper.tasks.usgs_vsc.plugin',
+    WiscArDataPlugin='pychron.data_mapper.tasks.wisc_ar.plugin',
 
     # experiment
     EntryPlugin='pychron.entry.tasks.entry_plugin',
@@ -61,6 +62,7 @@ PACKAGE_DICT = dict(
     ExternalPipettePlugin='pychron.external_pipette.tasks.external_pipette_plugin',
     ExtractionLinePlugin='pychron.extraction_line.tasks.extraction_line_plugin',
     ChromiumCO2Plugin='pychron.lasers.tasks.plugins.chromium_co2',
+    ChromiumDiodePlugin='pychron.lasers.tasks.plugins.chromium_diode',
     ChromiumUVPlugin='pychron.lasers.tasks.plugins.chromium_uv',
     FusionsDiodePlugin='pychron.lasers.tasks.plugins.diode',
     FusionsCO2Plugin='pychron.lasers.tasks.plugins.co2',

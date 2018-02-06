@@ -95,19 +95,22 @@ class PychronLaserManager(EthernetLaserManager):
         return self._ask('GetSampleHolder')
 
     def get_error(self):
-        return self._ask('GetError')
+        error = self._ask('GetError')
+        if error is None:
+            error = 'Get Error Failed'
+        return error
 
     # ===============================================================================
     # patterning
     # ===============================================================================
-    def execute_pattern(self, name=None, block=False):
+    def execute_pattern(self, name=None, block=False, duration=None):
         """
             name is either a name of a file
             of a pickled pattern obj
         """
         if name:
             self._patterning = True
-            self._execute_pattern(name, block)
+            self._execute_pattern(name, block, duration)
             if block:
                 self._patterning = False
 
@@ -140,21 +143,22 @@ class PychronLaserManager(EthernetLaserManager):
         return self._ask('AcquireGrainPolygonBlob')
 
     def start_measure_grain_polygon(self):
-        self._ask('StartMeasureGrainPolygon', verbose=True)
+        return self._ask('StartMeasureGrainPolygon')
 
     def stop_measure_grain_polygon(self):
-        self._ask('StopMeasureGrainPolygon', verbose=True)
+        return self._ask('StopMeasureGrainPolygon')
 
     def get_grain_polygon_blob(self):
         blobs = []
-        while 1:
-            blob = self._ask('GetGrainPolygonBlob')
-            if blob:
-                if blob == 'No Response':
+        if globalv.laser_version > 0:
+            while 1:
+                blob = self._ask('GetGrainPolygonBlob')
+                if blob:
+                    if blob == 'No Response':
+                        break
+                    blobs.append(blob)
+                else:
                     break
-                blobs.append(blob)
-            else:
-                break
 
         return blobs
 
@@ -174,16 +178,18 @@ class PychronLaserManager(EthernetLaserManager):
                 pass
         return rv
 
-    def do_machine_vision_degas(self, lumens, duration):
-        if lumens and duration:
-            self.info('Doing machine vision degas. lumens={}'.format(lumens))
-            self._ask('MachineVisionDegas {},{}'.format(lumens, duration))
-        else:
-            self.debug('lumens and duration not set {}, {}'.format(lumens, duration))
+    # def do_machine_vision_degas(self, lumens, duration):
+    #     if lumens and duration:
+    #         self.info('Doing machine vision degas. lumens={}'.format(lumens))
+    #         self._ask('MachineVisionDegas {},{}'.format(lumens, duration))
+    #     else:
+    #         self.debug('lumens and duration not set {}, {}'.format(lumens, duration))
 
     def start_video_recording(self, name):
         self.info('Start Video Recording')
-        self._ask('StartVideoRecording {}'.format(name))
+        cmd = {'command': 'StartVideoRecording', 'name': name}
+
+        self._ask(json.dumps(cmd))
 
     def stop_video_recording(self):
         self.info('Stop Video Recording')
@@ -297,7 +303,7 @@ class PychronLaserManager(EthernetLaserManager):
     def _snapshot_button_fired(self):
         self.take_snapshot('test', view_snapshot=True)
 
-    def _execute_pattern(self, pat, block):
+    def _execute_pattern(self, pat, block, duration):
         self.info('executing pattern {}'.format(pat))
 
         if not pat.endswith('.lp'):
@@ -309,14 +315,21 @@ class PychronLaserManager(EthernetLaserManager):
             pat = pickle.dumps(path)
             self.debug('Sending Pattern:{}'.format(pat))
 
-        cmd = 'DoPattern {}'.format(pat)
-        self._ask(cmd, verbose=False)
+        self.debug('-------- laser version {}'.format(globalv.laser_version))
+        if globalv.laser_version > 0:
+            cmd = {'command': 'DoPattern',
+                   'name': pat,
+                   'duration': duration}
+            cmd = json.dumps(cmd)
+        else:
+            cmd = 'DoPattern {}'.format(pat)
+
+        self._ask(cmd, verbose=True)
 
         if block:
             time.sleep(0.5)
             if not self._block('IsPatterning', period=1):
-                cmd = 'AbortPattern'
-                self._ask(cmd)
+                self._ask('AbortPattern')
 
     # ===============================================================================
     # pyscript private

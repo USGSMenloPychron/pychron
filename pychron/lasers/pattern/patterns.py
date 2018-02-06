@@ -201,6 +201,8 @@ class Pattern(HasTraits):
     z_duration = Float
     power_duration = Float
 
+    external_duration = Float
+
     z_period = Float(1)
     z_duty = Float
     z_min = Float
@@ -304,10 +306,13 @@ class Pattern(HasTraits):
 
     def clear_graph(self):
         graph = self.graph
-        graph.set_data([], series=1, axis=0)
-        graph.set_data([], series=1, axis=1)
-        graph.set_data([], series=2, axis=0)
-        graph.set_data([], series=2, axis=1)
+        try:
+            graph.set_data([], series=1, axis=0)
+            graph.set_data([], series=1, axis=1)
+            graph.set_data([], series=2, axis=0)
+            graph.set_data([], series=2, axis=1)
+        except IndexError:
+            pass
 
     def reset_graph(self, **kw):
         self.graph = self._graph_factory(**kw)

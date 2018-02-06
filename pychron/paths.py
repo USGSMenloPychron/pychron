@@ -158,6 +158,7 @@ class Paths(object):
     furnace_map_dir = None
     user_points_dir = None
     irradiation_tray_maps_dir = None
+
     # ==============================================================================
     # data
     # ==============================================================================
@@ -287,8 +288,10 @@ class Paths(object):
     csv_analyses_export_template = None
     radial_template = None
     regression_series_template = None
+    correction_factors_template = None
 
     furnace_sample_states = None
+    valid_pi_names = None
 
     def write_default_file(self, p, default, overwrite=False):
         return self._write_default_file(p, default, overwrite)
@@ -467,6 +470,7 @@ class Paths(object):
 
         self.furnace_firmware = join(self.setup_dir, 'furnace_firmware.yaml')
         self.furnace_sample_states = join(self.appdata_dir, 'furnace_sample_states.yaml')
+        self.valid_pi_names = join(self.setup_dir, 'valid_pi_names.yaml')
 
         # =======================================================================
         # pipeline templates
@@ -523,15 +527,21 @@ class Paths(object):
         # self.write_file_defaults(self.plot_factory_defaults, force=True)
 
     def write_file_defaults(self, fs, force=False):
-        for p, d, o in fs:
-            print p, d, o
-            txt = get_file_text(d)
-            try:
-                p = getattr(paths, p)
-            except AttributeError, e:
-                print 'write_file_defaults', e
+        for args in fs:
+            if len(args) == 3:
+                p, d, o = args
+            else:
+                d, o = args
+                p = None
 
-            self.write_default_file(p, txt, o or force)
+            txt = get_file_text(d)
+            if p is not None:
+                try:
+                    p = getattr(paths, p)
+                except AttributeError, e:
+                    print 'write_file_defaults', e
+
+            self._write_default_file(p, txt, o or force)
 
     def _write_default_files(self):
         from pychron.file_defaults import DEFAULT_INITIALIZATION, DEFAULT_STARTUP_TESTS, SYSTEM_HEALTH
@@ -542,9 +552,7 @@ class Paths(object):
                      (self.simple_ui_file, SIMPLE_UI_DEFAULT),
                      (self.edit_ui_defaults, EDIT_UI_DEFAULT),
                      (self.task_extensions_file, TASK_EXTENSION_DEFAULT),
-                     (self.identifiers_file, IDENTIFIERS_DEFAULT),
-                     # (self.pipeline_template_file, PIPELINE_TEMPLATES)
-                     ):
+                     (self.identifiers_file, IDENTIFIERS_DEFAULT)):
             overwrite = d in (SYSTEM_HEALTH, SIMPLE_UI_DEFAULT,)
             # overwrite = d in (SYSTEM_HEALTH, SIMPLE_UI_DEFAULT,)
             # print p
@@ -553,7 +561,6 @@ class Paths(object):
     def _write_default_file(self, p, default, overwrite=False):
         if not path.isfile(p) or overwrite:
             with open(p, 'w') as wfile:
-                print 'writing default {}'.format(p)
                 wfile.write(default)
                 return True
 
@@ -583,8 +590,6 @@ def build_directories():
 
 
 def migrate_hidden():
-    print 'migrating hidden directory'
-
     hd = os.path.join(paths.root_dir, '.hidden')
     for root, dirs, files in os.walk(hd):
         if root == hd:

@@ -140,6 +140,10 @@ class MotionController(CoreDevice):
             self._z_position = v
             self.axes['z'].position = v
 
+    def in_motion(self):
+        if self.timer:
+            return self.timer.isActive()
+
     def moving(self, *args, **kw):
         return self._moving(*args, **kw)
 
@@ -230,7 +234,11 @@ class MotionController(CoreDevice):
             return
 
         c = getattr(self, '_{}_position'.format(name))
+
         disp = abs(c - v)
+        if c == v or disp < 0.001:
+            return
+
         self.debug('set axis {} to {}. current pos={}'.format(name, v, c))
         self.single_axis_move(name, v, update=disp > 4, **kw)
 

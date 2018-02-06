@@ -17,13 +17,14 @@ import os
 from random import random
 
 from numpy import array
-from traits.api import Any, cached_property, List, TraitError, Str, Property
+from traits.api import Any, cached_property, List, TraitError, Str, Property, Bool
 
 from pychron.core.helpers.filetools import list_directory2
 from pychron.globals import globalv
 from pychron.paths import paths
 from pychron.pychron_constants import NULL_STR
-from pychron.spectrometer import get_spectrometer_config_path, get_spectrometer_config_name
+from pychron.spectrometer import get_spectrometer_config_path, get_spectrometer_config_name, \
+    set_spectrometer_config_name
 from pychron.spectrometer.base_detector import BaseDetector
 from pychron.spectrometer.spectrometer_device import SpectrometerDevice
 
@@ -51,14 +52,30 @@ class BaseSpectrometer(SpectrometerDevice):
     spectrometer_configuration = Str
     spectrometer_configurations = List
 
+    use_deflection_correction = Bool(True)
+    use_hv_correction = Bool(True)
     _connection_status = False
     _saved_integration = None
     _debug_values = None
 
     _test_connect_command = ''
 
+    _config = None
+
     _prev_signals = None
     _no_intensity_change_cnt = 0
+
+    def convert_to_axial(self, det, v):
+        return v
+
+    def make_deflection_dict(self):
+        raise NotImplementedError
+
+    def make_configuration_dict(self):
+        raise NotImplementedError
+
+    def make_gains_dict(self):
+        raise NotImplementedError
 
     def start(self):
         pass
@@ -134,6 +151,87 @@ class BaseSpectrometer(SpectrometerDevice):
         if self._saved_integration:
             self.set_integration_time(self._saved_integration)
             self._saved_integration = None
+
+    def correct_dac(self, det, dac, current=True):
+        """
+            correct for deflection
+            correct for hv
+        """
+        # correct for deflection
+        if self.use_deflection_correction:
+            dev = det.get_deflection_correction(current=current)
+            dac += dev
+
+        # correct for hv
+        # dac *= self.get_hv_correction(current=current)
+        if self.use_hv_correction:
+            dac = self.get_hv_correction(dac, current=current)
+        return dac
+
+    def uncorrect_dac(self, det, dac, current=True):
+        """
+                inverse of correct_dac
+        """
+
+        if self.use_hv_correction:
+            dac = self.get_hv_correction(dac, uncorrect=True, current=current)
+
+        if self.use_deflection_correction:
+            dac -= det.get_deflection_correction(current=current)
+        return dac
+
+    def get_hv_correction(self, dac, uncorrect=False, current=False):
+        """
+        ion optics correction::
+
+            r=M*v_o/(q*B_o)
+            r=M*v_c/(q*B_c)
+
+            E=m*v^2/2
+            v=(2*E/m)^0.5
+
+            v_o/B_o = v_c/B_c
+            B_c = B_o*v_c/v_o
+
+            B_c = B_o*(E_c/E_o)^0.5
+
+            B_o = B_c*(E_o/E_c)^0.5
+
+            E_o = nominal hv
+            E_c = current hv
+            B_o = nominal dac
+            B_c = corrected dac
+
+        """
+        source = self.source
+        cur = source.current_hv
+        if current:
+            cur = source.read_hv()
+
+        if cur is None:
+            cor = 1
+        else:
+            try:
+                # cor = source.nominal_hv / cur
+                if uncorrect:
+                    cor = source.nominal_hv / cur
+                else:
+                    cor = cur / source.nominal_hv
+
+                cor **= 0.5
+
+            except ZeroDivisionError:
+                cor = 1
+
+        dac *= cor
+        return dac
+
+    def get_deflection_word(self, keys):
+        if self.simulation:
+            x = [random.random() for i in keys]
+        else:
+            x = self.read_deflection_word(keys)
+        return x
 
     def get_parameter_word(self, keys):
         if self.simulation:
@@ -219,10 +317,63 @@ class BaseSpectrometer(SpectrometerDevice):
                     self.warning(
                         'Cannot update isotopes. isotope={}, detector={}. error:{}'.format(isotope, detector, e))
 
+    def send_configuration(self, **kw):
+        """
+            send the configuration values to the device
+        """
+        self._send_configuration(**kw)
+
+    def _send_configuration(self, **kw):
+        raise NotImplementedError
+
+    def _get_cached_config(self):
+        if self._config is None:
+            p = get_spectrometer_config_path()
+            if not os.path.isfile(p):
+                self.warning_dialog('Spectrometer configuration file {} not found'.format(p))
+                return
+
+            self.debug('caching configuration from {}'.format(p))
+            config = self.get_configuration_writer(p)
+            d = {}
+            defl = {}
+            trap = {}
+            for section in config.sections():
+                if section in ('Default', 'Protection', 'General', 'Trap', 'Magnet'):
+                    continue
+
+                for attr in config.options(section):
+                    v = config.getfloat(section, attr)
+                    if v is not None:
+                        if section == 'Deflections':
+                            defl[attr.upper()] = v
+                        else:
+                            d[attr] = v
+
+            section = 'Trap'
+            if config.has_section(section):
+                for attr in ('current', 'ramp_step', 'ramp_period', 'ramp_tolerance', 'voltage'):
+                    if config.has_option(section, attr):
+                        trap[attr] = config.getfloat(section, attr)
+
+            section = 'Magnet'
+            magnet = {}
+            if config.has_section(section):
+                for attr in ('mftable',):
+                    if config.has_option(section, attr):
+                        magnet[attr] = config.get(section, attr)
+
+            if 'hv' in d:
+                self.source.nominal_hv = d['hv']
+
+            self._config = (d, defl, trap, magnet)
+
+        return self._config
+
     def load(self):
+        self.load_molecular_weights()
         self.load_detectors()
         self.magnet.load()
-
         # load local configurations
         self.spectrometer_configurations = list_directory2(paths.spectrometer_config_dir, remove_extension=True,
                                                            extension='.cfg')
@@ -233,7 +384,38 @@ class BaseSpectrometer(SpectrometerDevice):
 
         p = get_spectrometer_config_path(name)
         config = self.get_configuration_writer(p)
+
         return config
+
+    def load_molecular_weights(self):
+        import csv, yaml
+        # load the molecular weights dictionary
+
+        p = os.path.join(paths.spectrometer_dir, 'molecular_weights.csv')
+        yp = os.path.join(paths.spectrometer_dir, 'molecular_weights.yaml')
+        if os.path.isfile(p):
+            self.info('loading "molecular_weights.csv" file. {}'.format(p))
+            with open(p, 'r') as f:
+                reader = csv.reader(f, delimiter='\t')
+                mws = {l[0]: float(l[1]) for l in reader}
+        elif os.path.isfille(yp):
+            self.info('loading "molecular_weights.yaml" file. {}'.format(yp))
+            with open(p, 'r') as f:
+                mws = yaml.load(f)
+        else:
+            self.info('writing a default "molecular_weights.csv" file')
+            # make a default molecular_weights.csv file
+            from pychron.spectrometer.molecular_weights import MOLECULAR_WEIGHTS as mws
+
+            with open(p, 'U' if os.path.isfile(p) else 'w') as f:
+                writer = csv.writer(f, delimiter='\t')
+                data = [a for a in mws.itervalues()]
+                data = sorted(data, key=lambda x: x[1])
+                for row in data:
+                    writer.writerow(row)
+
+        self.debug('Mol weights {}'.format(mws))
+        self.molecular_weights = mws
 
     def load_detectors(self):
         """
@@ -244,7 +426,7 @@ class BaseSpectrometer(SpectrometerDevice):
         config = self.get_configuration(path=os.path.join(paths.spectrometer_dir, 'detectors.cfg'))
 
         for i, name in enumerate(config.sections()):
-            # relative_position = self.config_get(config, name, 'relative_position', cast='float')
+            relative_position = self.config_get(config, name, 'relative_position', cast='float')
 
             color = self.config_get(config, name, 'color', default='black')
             default_state = self.config_get(config, name, 'default_state',
@@ -271,6 +453,7 @@ class BaseSpectrometer(SpectrometerDevice):
 
             self._add_detector(name=name,
                                index=index,
+                               relative_position=relative_position,
                                use_deflection=use_deflection,
                                protection_threshold=pt,
                                deflection_correction_sign=deflection_correction_sign,
@@ -398,7 +581,17 @@ class BaseSpectrometer(SpectrometerDevice):
     def read_intensities(self):
         raise NotImplementedError
 
+    def read_deflection_word(self):
+        pass
+
+    def read_parameter_word(self):
+        pass
+
     # private
+    def _spectrometer_configuration_changed(self, new):
+        if new:
+            set_spectrometer_config_name(new)
+
     def _add_detector(self, **kw):
         d = self.detector_klass(spectrometer=self, microcontroller=self.microcontroller, **kw)
         d.load()

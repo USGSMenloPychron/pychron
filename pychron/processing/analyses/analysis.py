@@ -20,7 +20,7 @@ from collections import namedtuple
 from numpy import Inf
 from pyface.message_dialog import information
 from pyface.qt import QtCore
-from traits.api import Event, Dict, List
+from traits.api import Event, Dict, List, Str
 from traits.has_traits import HasTraits
 from traitsui.handler import Handler
 from uncertainties import ufloat, std_dev, nominal_value
@@ -145,7 +145,7 @@ class IdeogramPlotable(HasTraits):
     tag = 'ok'
     tag_note = ''
     uage = None
-    temp_status = 'ok'
+    temp_status = Str('ok')
     otemp_status = None
     _record_id = None
     temp_selected = False
@@ -422,8 +422,8 @@ class Analysis(ArArAge, IdeogramPlotable):
 
     @property
     def analysis_view(self):
-        print 'call analyis va'
         v = self._analysis_view
+        print 'call analyis va', v
         if v is None:
             mod, klass = self.analysis_view_klass
             mod = __import__(mod, fromlist=[klass, ])
@@ -431,7 +431,7 @@ class Analysis(ArArAge, IdeogramPlotable):
             # v = self.analysis_view_klass()
             v = klass()
             self._analysis_view = v
-        self._sync_view(v)
+            self._sync_view(v)
 
         return v
 

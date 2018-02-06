@@ -15,51 +15,21 @@
 # ===============================================================================
 
 # ============= enthought library imports =======================
+from skimage.draw import circle
+from traits.api import Any, Bool, List
+
 import cStringIO
 import os
 import time
 from threading import Thread, current_thread, Event
-
-from chaco.abstract_overlay import AbstractOverlay
-from chaco.default_colormaps import hot
-from chaco.scatterplot import render_markers
-from numpy import polyfit, linspace, hstack, array, average, zeros_like
-from traits.api import Any, Bool, List
+from numpy import polyfit, array, average, uint8
+from skimage.color import gray2rgb
 
 from pychron.core.ui.gui import invoke_in_main_thread
 from pychron.envisage.view_util import open_view
 from pychron.hardware.motion_controller import PositionError
-from pychron.lasers.pattern.dragonfly_pattern import dragonfly
 from pychron.lasers.pattern.patternable import Patternable
 from pychron.paths import paths
-
-
-class PeriodCTX:
-    def __init__(self, duration):
-        self._duration = duration
-
-    def __enter__(self):
-        self._st = time.time()
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if exc_type is None:
-            et = time.time() - self._st
-            time.sleep(max(0, self._duration - et))
-
-
-class CurrentPointOverlay(AbstractOverlay):
-    _points = List
-
-    def overlay(self, other_component, gc, view_bounds=None, mode="normal"):
-        if self._points:
-            with gc:
-                pts = self.component.map_screen(self._points)
-                render_markers(gc, pts[1:], 'circle', 3, (0, 1, 0), 1, (0, 1, 0))
-                render_markers(gc, pts[:1], 'circle', 3, (1, 1, 0), 1, (1, 1, 0))
-
-    def add_point(self, pt):
-        self._points.append(pt)
-        self._points = self._points[-3:]
 
 
 class PatternExecutor(Patternable):
@@ -71,8 +41,11 @@ class PatternExecutor(Patternable):
     laser_manager = Any
     show_patterning = Bool(False)
     _alive = Bool(False)
-    _next_point = None
-    pattern = None
+
+    def __init__(self, *args, **kw):
+        super(PatternExecutor, self).__init__(*args, **kw)
+        self._next_point = None
+        self.pattern = None
 
     def start(self, show=False):
         self._alive = True
@@ -166,7 +139,7 @@ class PatternExecutor(Patternable):
         self.pattern.window_y = 50
         open_view(self.pattern, view='graph_view')
 
-    def execute(self, block=False):
+    def execute(self, block=False, duration=None):
         """
             if block is true wait for patterning to finish
             before returning
@@ -187,6 +160,9 @@ class PatternExecutor(Patternable):
         self.debug('execute xy pattern')
 
         xyp = self.pattern.xy_pattern_enabled
+        if duration:
+            self.pattern.external_duration = float(duration)
+
         t = None
         if xyp:
             t = Thread(target=self._execute_xy_pattern)
@@ -221,12 +197,8 @@ class PatternExecutor(Patternable):
         pattern = self.pattern
 
         kind = pattern.kind
-        if kind == 'SeekPattern':
-            from pychron.graph.graph import Graph
-
-            g = Graph(window_x=1000, window_y=100, window_height=900)
-            self._info = open_view(g)
-            self._seek_graph = g
+        if kind in ('SeekPattern', 'DragonFlyPeakPattern'):
+            self._info = open_view(pattern, view='execution_graph_view')
 
         if evt is not None:
             evt.set()
@@ -294,12 +266,9 @@ class PatternExecutor(Patternable):
             if kind == 'ArcPattern':
                 self._execute_arc(controller, pattern)
             elif kind == 'CircularContourPattern':
-
                 self._execute_contour(controller, pattern)
-            elif kind in ('SeekPattern', 'DragonFlyPattern'):
+            elif kind in ('SeekPattern', 'DragonFlyPeakPattern'):
                 self._execute_seek(controller, pattern)
-            elif kind == 'DegasPattern':
-                self._execute_lumen_degas(controller, pattern)
             else:
                 self._execute_points(controller, pattern, multipoint=False)
 
@@ -331,125 +300,10 @@ class PatternExecutor(Patternable):
         controller.single_axis_move('x', pattern.radius, block=True)
         controller.arc_move(pattern.cx, pattern.cy, pattern.degrees, block=True)
 
-    def _execute_lumen_degas(self, controller, pattern):
-        from pychron.core.pid import PID
-        from pychron.core.ui.gui import invoke_in_main_thread
-        from pychron.lasers.pattern.mv_viewer import MVViewer
-        from pychron.graph.stream_graph import StreamStackedGraph
-        from pychron.mv.mv_image import MVImage
-
-        lm = self.laser_manager
-        sm = lm.stage_manager
-
-        g = StreamStackedGraph()
-
-        img = MVImage()
-
-        img.setup_images(2, sm.get_frame_size())
-
-        mvviewer = MVViewer(graph=g, image=img)
-        mvviewer.edit_traits()
-        # g.edit_traits()
-
-        g.new_plot(xtitle='Time', ytitle='Lumens')
-        g.new_series()
-
-        g.new_plot(xtitle='Time', ytitle='Error')
-        g.new_series(plotid=1)
-
-        g.new_plot(xtitle='Time', ytitle='Power')
-        g.new_series(plotid=2)
-
-        duration = pattern.duration
-        lumens = pattern.lumens
-        dt = pattern.period
-        st = time.time()
-
-        pid = PID()
-
-        def update(c, e, o, cs, ss):
-            g.record(c, plotid=0)
-            g.record(e, plotid=1)
-            g.record(o, plotid=2)
-
-            img.set_image(cs, 0)
-            img.set_image(ss, 1)
-
-        while self._alive:
-
-            if duration and time.time() - st > duration:
-                break
-
-            with PeriodCTX(dt):
-                csrc, src, cl = sm.get_brightness()
-
-                err = lumens - cl
-                out = pid.get_value(err, dt)
-                lm.set_laser_power(out)
-                invoke_in_main_thread(update, (cl, err, out, csrc, src))
-
-    def _setup_seek_graph(self, pattern):
-        g = self._seek_graph
-
-        g.new_plot(padding_top=20)
-        s, p = g.new_series()
-        p.aspect_ratio = 1.0
-        cp = CurrentPointOverlay(component=s)
-        s.overlays.append(cp)
-
-        r = pattern.perimeter_radius
-        xs = linspace(-r, r)
-        xs2 = xs[::-1]
-        ys = (r ** 2 - xs ** 2) ** 0.5
-        ys2 = -(r ** 2 - xs2 ** 2) ** 0.5
-
-        g.new_series(x=hstack((xs, xs2)), y=hstack((ys, ys2)), type='line')
-
-        g.set_x_title('X (mm)', plotid=0)
-        g.set_y_title('Y (mm)', plotid=0)
-
-        g.new_plot(padding_top=10, padding_bottom=20, padding_right=20, padding_left=60)
-        g.new_series(type='line')
-        g.new_series()
-        g.set_y_title('Density', plotid=1)
-        g.set_x_title('Time (s)', plotid=1)
-
-        g.new_plot(padding_bottom=20, padding_right=20, padding_left=60)
-        g.new_series()
-        g.set_y_title('Score', plotid=2)
-        g.set_x_title('Time (s)', plotid=2)
-
-        # name = 'imagedata{:03d}'.format(i)
-        # plotdata.set_data(name, ones(wh))
-
-        imgplot = g.new_plot(padding=10)
-        imgplot.x_axis.visible = False
-        imgplot.y_axis.visible = False
-        imgplot.x_grid.visible = False
-        imgplot.y_grid.visible = False
-
-        frm = self.laser_manager.stage_manager.video.get_cached_frame()
-        imgplot.data.set_data('imagedata', zeros_like(frm))
-        imgplot.img_plot('imagedata', colormap=hot)
-
-        g.set_x_limits(-r, r)
-        g.set_y_limits(-r, r)
-
-        total_duration = pattern.total_duration
-        g.set_y_limits(min_=-0.1, max_=1.1, plotid=1)
-        g.set_x_limits(max_=total_duration * 1.1, plotid=1)
-
-        g.set_x_limits(max_=total_duration * 1.1, plotid=2)
-        g.set_y_limits(min_=-0.1, max_=1.1, plotid=2)
-        return imgplot, cp
-
     def _execute_seek(self, controller, pattern):
-        from pychron.core.ui.gui import invoke_in_main_thread
-        # from pychron.graph.graph import Graph
+
         duration = pattern.duration
         total_duration = pattern.total_duration
-
-        imgplot, cp = self._setup_seek_graph(pattern)
 
         lm = self.laser_manager
         sm = lm.stage_manager
@@ -469,23 +323,140 @@ class PatternExecutor(Patternable):
         self.debug('total duration {}'.format(total_duration))
         self.debug('dwell duration {}'.format(duration))
 
-        if pattern.kind == 'DragonFly':
-            self._dragonfly(st, controller, pattern, imgplot, cp)
+        if pattern.kind == 'DragonFlyPeakPattern':
+            self._dragonfly_peak(st, pattern, lm, controller)
         else:
-            self._hill_climber(st, controller, pattern, imgplot, cp)
+            self._hill_climber(st, controller, pattern)
 
         sm.canvas.show_desired_position = osdp
-        invoke_in_main_thread(self._info.dispose)
 
-    def _dragonfly(self, st, controller, pattern, imgplot, cp):
-        dragonfly(st, pattern, self.laser_manager, controller, imgplot, cp)
+        from pyface.gui import GUI
+        GUI.invoke_later(self._info.dispose)
 
-    def _hill_climber(self, st, controller, pattern, imgplot, cp):
-        g = self._seek_graph
-        lines = []
+    def _dragonfly_peak(self, st, pattern, lm, controller):
+
+        # imgplot, imgplot2, imgplot3 = pattern.setup_execution_graph()
+        imgplot, imgplot2 = pattern.setup_execution_graph()
         cx, cy = pattern.cx, pattern.cy
-        prev_xy = None
-        prev_xy2 = None
+
+        sm = lm.stage_manager
+
+        linear_move = controller.linear_move
+        in_motion = controller.in_motion
+        find_lum_peak = sm.find_lum_peak
+        set_data = imgplot.data.set_data
+        set_data2 = imgplot2.data.set_data
+
+        duration = pattern.duration
+        sat_threshold = pattern.saturation_threshold
+        total_duration = pattern.total_duration
+        min_distance = pattern.min_distance
+        aggressiveness = pattern.aggressiveness
+        update_period = pattern.update_period / 1000.
+        move_threshold = pattern.move_threshold
+        px, py = cx, cy
+
+        point_gen = None
+        cnt = 0
+        peak = None
+        while time.time() - st < total_duration:
+            if not self._alive:
+                break
+
+            sats = []
+            pts = []
+            ist = time.time()
+            npt = None
+
+            while time.time() - ist < duration or in_motion():
+                pt, peakcol, peakrow, peak_img, sat, src = find_lum_peak(min_distance)
+
+                sats.append(sat)
+                if peak is None:
+                    peak = peak_img
+                else:
+                    peak = ((peak.astype('int16') - 2) + peak_img).clip(0, 255)
+
+                img = gray2rgb(peak).astype(uint8)
+
+                if pt:
+                    pts.append(pt)
+                    c = circle(peakrow, peakcol, min_distance / 2)
+                    img[c] = (255, 0, 0)
+                    src[c] = (255, 0, 0)
+
+                set_data('imagedata', src)
+                set_data2('imagedata', img)
+                time.sleep(update_period)
+
+            pattern.position_str = '---'
+
+            if pts:
+                w = array(sats)
+                avg_sat_score = w.mean()
+                self.debug('Average Saturation: {} threshold={}'.format(avg_sat_score, sat_threshold))
+                pattern.average_saturation = avg_sat_score
+                if avg_sat_score < sat_threshold:
+                    pts = array(pts)
+                    x, y, w = pts.T
+                    ws = w.sum()
+                    nx = (x * w).sum() / ws
+                    ny = (y * w).sum() / ws
+                    self.debug('New point {},{}'.format(nx, ny))
+                    npt = nx, ny, 1
+                else:
+                    continue
+
+            if npt is None:
+                if not point_gen:
+                    point_gen = pattern.point_generator()
+                # wait = False
+                npt = next(point_gen)
+            else:
+                point_gen = None
+                # wait = True
+            try:
+                scalar = npt[2]
+            except IndexError:
+                scalar = 1
+
+            ascalar = scalar * aggressiveness
+            dx = npt[0] / sm.pxpermm * ascalar
+            dy = npt[1] / sm.pxpermm * ascalar
+            if abs(dx) < move_threshold or abs(dy) < move_threshold:
+                self.debug('Deviation too small dx={},dy={}'.format(dx, dy, move_threshold))
+                continue
+            px += dx
+            py -= dy
+            self.debug('i: {}. point={},{}. '
+                       'Intensitiy Scalar={}, Modified Scalar={}'.format(cnt, px, py, scalar, ascalar))
+
+            if not pattern.validate(px, py):
+                self.debug('invalid position. {},{}'.format(px, py))
+                px, py = pattern.reduce_vector_magnitude(px, py, 0.85)
+                self.debug('reduced vector magnitude. new pos={},{}'.format(px, py))
+
+            pattern.position_str = '{:0.5f},{:0.5f}'.format(px, py)
+
+            try:
+                linear_move(px, py, block=False, velocity=pattern.velocity,
+                            use_calibration=False)
+            except PositionError:
+                break
+
+            # if wait:
+            #     et = time.time() - ist
+            #     d = duration - et
+            #     if d > 0:
+            #         time.sleep(d)
+
+            cnt += 1
+
+    def _hill_climber(self, st, controller, pattern):
+        g = pattern.execution_graph
+        imgplot, cp = pattern.setup_execution_graph()
+
+        cx, cy = pattern.cx, pattern.cy
 
         sm = self.laser_manager.stage_manager
         linear_move = controller.linear_move
@@ -497,9 +468,14 @@ class PatternExecutor(Patternable):
         sat_threshold = pattern.saturation_threshold
         total_duration = pattern.total_duration
         duration = pattern.duration
+        pattern.perimeter_radius *= sm.pxpermm
 
-        for i, (x, y) in enumerate(pattern.point_generator()):
+        avg_sat_score = -1
+        # current_x, current_y =None, None
+        for i, pt in enumerate(pattern.point_generator()):
+            update_plot = True
 
+            x, y = pt.x, pt.y
             ax, ay = cx + x, cy + y
             if not self._alive:
                 break
@@ -507,17 +483,20 @@ class PatternExecutor(Patternable):
             if time.time() - st > total_duration:
                 break
 
-            use_update_point = True
+            # use_update_point = False
             if avg_sat_score < sat_threshold:
-                use_update_point = True
+                # use_update_point = False
+                # current_x, current_y = x, y
                 try:
                     linear_move(ax, ay, block=False, velocity=pattern.velocity,
+                                use_calibration=False,
                                 update=False,
                                 immediate=True)
                 except PositionError:
                     break
             else:
                 self.debug('Saturation target reached. not moving')
+                update_plot = False
 
             density_scores = []
             ts = []
@@ -551,57 +530,36 @@ class PatternExecutor(Patternable):
                 density_scores = array(density_scores)
                 saturation_scores = array(saturation_scores)
 
-                weights = [1 / ((xi - ax) ** 2 + (yi - ay) ** 2) for xi, yi in positions]
+                weights = [1 / (max(0.0001, ((xi - ax) ** 2 + (yi - ay) ** 2)) ** 0.5) for xi, yi in positions]
 
                 avg_score = average(density_scores, weights=weights)
                 avg_sat_score = average(saturation_scores, weights=weights)
-
-                if prev_xy:
-                    weights = [1 / ((xi - prev_xy[0]) ** 2 + (yi - prev_xy[1]) ** 2) for xi, yi in positions]
-                    avg_score_prev = average(density_scores, weights=weights)
-                    if prev_xy2:
-                        weights = [1 / ((xi - prev_xy2[0]) ** 2 + (yi - prev_xy2[1]) ** 2) for xi, yi in positions]
-                        avg_score_prev2 = average(density_scores, weights=weights)
-
                 score = avg_score
+
                 m, b = polyfit(ts, density_scores, 1)
                 if m > 0:
                     score *= (1 + m)
 
-                if use_update_point:
-                    pattern.update_point(score, x, y)
-                else:
-                    pattern.set_point(score, x, y)
-                    if prev_xy:
-                        pattern.update_point(avg_score_prev, prev_xy[0], prev_xy[1], idx=-2)
-                        if prev_xy2:
-                            pattern.update_point(avg_score_prev2, prev_xy2[0], prev_xy2[1], idx=-3)
+                pattern.set_point(score, pt)
 
-                lines.append('{:0.5f}   {:0.3f}   {:0.3f}   {}    {}\n'.format(avg_score, x, y, n, score))
                 self.debug('i:{} XY:({:0.5f},{:0.5f})'.format(i, x, y))
-                self.debug('Density. AVG:{:0.2f} N:{} Slope:{:0.3f}'.format(avg_score, n, m))
-                self.debug('Modified Density Score: {}'.format(score))
-                self.debug('Saturation. AVG:{:0.2f}'.format(avg_sat_score))
+                self.debug('Density. AVG:{:0.3f} N:{} Slope:{:0.3f}'.format(avg_score, n, m))
+                self.debug('Modified Density Score: {:0.3f}'.format(score))
+                self.debug('Saturation. AVG:{:0.3f}'.format(avg_sat_score))
+                if update_plot:
+                    cp.add_point((x, y))
+                    g.add_datum((x, y), plotid=0)
 
-                cp.add_point((x, y))
-
-                g.add_datum((x, y), plotid=0)
                 t = time.time() - st
                 g.add_datum((t, avg_score), plotid=1)
 
-                g.add_bulk_data(ts, density_scores, plotid=1, series=1)
+                # g.add_bulk_data(ts, density_scores, plotid=1, series=1)
 
                 g.add_datum((t, score),
                             ypadding='0.1',
                             ymin_anchor=-0.1,
-                            update_y_limits=True, plotid=2)
+                            update_y_limits=True, plotid=1)
 
             update_axes()
-            if prev_xy:
-                prev_xy2 = prev_xy
-            prev_xy = (ax, ay)
-
-            # invoke_in_main_thread(g.redraw, force=False)
-            # invoke_in_main_thread(update_graph, ts, zs, z, x, y)
 
 # ============= EOF =============================================
